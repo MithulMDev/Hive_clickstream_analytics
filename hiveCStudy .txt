@@ -1,0 +1,103 @@
+Create directory in hdfs to collect data:
+hadoop fs -mkdir /user/hive/ecom_cstudy
+
+Import from aws s3:
+aws s3 ls hivecstudy
+
+Copying data from aws s3 to HDFS:
+hadoop distcp 's3://hivecstudy/*' 'user/hive/ecom_cstudy/'
+
+listing the hadoop files:
+hadoop fs -ls /user/hive/ecom_cstudy/
+
+Reading the datasets:
+hadoop fs -cat /user/hive/ecom_cstudy/2019-Oct.csv | head
+hadoop fs -cat /user/hive/ecom_cstudy/2019-Nov.csv | head
+
+Create database:
+create database clickstream_info;
+
+Use:
+use clickstream_info;
+
+Create base table to read input data:
+create external table if not exists clickstream(event_time timestamp, event_type string, product_id string,
+category_id string, category_code string, brand string, price float, user_id bigint, user_session string)
+ROW FORMAT SERDE 
+'org.apache.hadoop.hive.serde2.OpenCSVSerde' WITH SERDEPROPERTIES ('separatorChar'= ',', 'escapeChar'= '\\') 
+stored as textfile
+location '/user/hive/ecom_cstudy/'
+tblproperties("skip.header.line.count"="1");
+
+viewing data in the table: 
+select * from clickstream limit 5;
+
+To enable partitioning and bucketing:
+set hive.exec.dynamic.partition.mode = nonstrict;
+set hive.exec.dynamic.partition = true;
+set hive.enforce.bucketing = true;
+
+viewing data in the table:
+select * from sales_bucket limit 5;
+
+
+Creating table for bucketing an partition:
+create table if not exists sales_bucket(event_time timestamp, product_id string, category_id string, 
+category_code string, brand string, price float, user_id bigint, user_session string)
+partitioned by (event_type string)
+clustered by (category_code) into 14 buckets
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
+STORED AS textfile;
+
+Inserting data into table:
+insert into table sales_bucket partition(event_type) select event_time, product_id, category_id, 
+category_code, brand, price, user_id, user_session,event_type from clickstream;
+
+
+Describing tables:
+desc clickstream;
+desc sales_bucket;
+
+
+Partitions:
+show partitions sales_bucket;
+
+
+Solutions to Questions
+1.Find the total revenue generated due to purchases made in October.
+select sum(price)from sales_bucket where event_type= 'purchase' and month(event_time) = 10;
+
+2.Write a query to yield the total sum of purchases per month in a single output. 
+select sum(price) from sales_bucket where event_type= 'purchase' group by month(event_time);
+
+3.Write a query to find the change in revenue generated due to purchases from October to November.
+select (sum(case when month(event_time)=11 then price else 0 end) - sum(case when 
+month(event_time)=10 then price else 0 end)) as revenue_generated from sales_bucket where event_type='purchase' ;
+
+4.Find distinct categories of products. Categories with null category code can be ignored.
+select distinct category_code from sales_bucket;
+
+5.Find the total number of products available under each category.
+select category_id, count(product_id) from sales_bucket group by category_id;
+
+6.Which brand had the maximum sales in October and November combined?
+select brand, sum(price) as sales from sales_bucket where event_type = 'purchase' 
+group by brand 
+order by sales
+desc limit 2;
+
+
+7.Which brands increased their sales from October to November?
+with brand_sales as ( select brand, sum(case when month(event_time)=10 then price else 0 end) as oct_sales,
+sum(case when month(event_time)=11 then price else 0 end) as nov_sales 
+from sales_bucket where event_type='purchase' group by 
+brand ) select brand from brand_sales where (nov_sales-oct_sales)>0 ;
+
+
+8.Your company wants to reward the top 10 users of its website with a Golden Customer plan. Write a query to generate a list of top 10 users who spend the most.
+select user_id, sum(price) as sales from sales_bucket where event_type = 'purchase' 
+group by user_id order by sales desc limit 10;
+
+
+***done***
+
